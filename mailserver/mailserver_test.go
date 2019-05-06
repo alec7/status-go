@@ -523,7 +523,7 @@ func (s *MailserverSuite) TestProcessRequestDeadlockHandling() {
 		Verify  func(
 			iterator.Iterator,
 			time.Duration, // processRequestInBundles timeout
-			chan []*whisper.Envelope,
+			chan []rlp.RawValue,
 		)
 	}{
 		{
@@ -532,7 +532,7 @@ func (s *MailserverSuite) TestProcessRequestDeadlockHandling() {
 			Verify: func(
 				iter iterator.Iterator,
 				timeout time.Duration,
-				bundles chan []*whisper.Envelope,
+				bundles chan []rlp.RawValue,
 			) {
 				done := make(chan struct{})
 				processFinished := make(chan struct{})
@@ -556,7 +556,7 @@ func (s *MailserverSuite) TestProcessRequestDeadlockHandling() {
 			Verify: func(
 				iter iterator.Iterator,
 				timeout time.Duration,
-				bundles chan []*whisper.Envelope,
+				bundles chan []rlp.RawValue,
 			) {
 				done := make(chan struct{}) // won't be closed because we test timeout of `processRequestInBundles()`
 				processFinished := make(chan struct{})
@@ -582,7 +582,7 @@ func (s *MailserverSuite) TestProcessRequestDeadlockHandling() {
 
 			// Nothing reads from this unbuffered channel which simulates a situation
 			// when a connection between a peer and mail server was dropped.
-			bundles := make(chan []*whisper.Envelope)
+			bundles := make(chan []rlp.RawValue)
 
 			tc.Verify(iter, tc.Timeout, bundles)
 		})
@@ -778,13 +778,19 @@ func processRequestAndCollectHashes(
 ) ([]common.Hash, []byte, common.Hash) {
 	iter := server.createIterator(lower, upper, cursor)
 	defer iter.Release()
-	bundles := make(chan []*whisper.Envelope, 10)
+	bundles := make(chan []rlp.RawValue, 10)
 	done := make(chan struct{})
 
 	var hashes []common.Hash
 	go func() {
 		for bundle := range bundles {
-			for _, env := range bundle {
+			for _, rawEnvelope := range bundle {
+
+				var env *whisper.Envelope
+				if err := rlp.DecodeBytes(rawEnvelope, &env); err != nil {
+					panic(err)
+				}
+
 				hashes = append(hashes, env.Hash())
 			}
 		}

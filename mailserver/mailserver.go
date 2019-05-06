@@ -299,7 +299,7 @@ func (s *WMailServer) DeliverMail(peer *whisper.Peer, request *whisper.Envelope)
 	iter := s.createIterator(lower, upper, cursor)
 	defer iter.Release()
 
-	bundles := make(chan []*whisper.Envelope, 5)
+	bundles := make(chan []rlp.RawValue, 5)
 	errCh := make(chan error)
 	cancelProcessing := make(chan struct{})
 
@@ -395,7 +395,7 @@ func (s *WMailServer) SyncMail(peer *whisper.Peer, request whisper.SyncMailReque
 	iter := s.createIterator(request.Lower, request.Upper, request.Cursor)
 	defer iter.Release()
 
-	bundles := make(chan []*whisper.Envelope, 5)
+	bundles := make(chan []rlp.RawValue, 5)
 	errCh := make(chan error)
 	cancelProcessing := make(chan struct{})
 
@@ -498,13 +498,13 @@ func (s *WMailServer) processRequestInBundles(
 	limit int,
 	timeout time.Duration,
 	requestID string,
-	output chan<- []*whisper.Envelope,
+	output chan<- []rlp.RawValue,
 	cancel <-chan struct{},
 ) ([]byte, common.Hash) {
 	var (
-		bundle                 []*whisper.Envelope
+		bundle                 []rlp.RawValue
 		bundleSize             uint32
-		batches                [][]*whisper.Envelope
+		batches                [][]rlp.RawValue
 		processedEnvelopes     int
 		processedEnvelopesSize int64
 		nextCursor             []byte
@@ -524,7 +524,9 @@ func (s *WMailServer) processRequestInBundles(
 	for iter.Next() {
 		var envelope whisper.Envelope
 
-		decodeErr := rlp.DecodeBytes(iter.Value(), &envelope)
+		rawValue := make([]byte, len(iter.Value()))
+		copy(rawValue, iter.Value())
+		decodeErr := rlp.DecodeBytes(rawValue, &envelope)
 		if decodeErr != nil {
 			log.Error("[mailserver:processRequestInBundles] failed to decode RLP",
 				"err", decodeErr,
@@ -544,7 +546,7 @@ func (s *WMailServer) processRequestInBundles(
 
 		// If we still have some room for messages, add and continue
 		if !limitReached && newSize < s.w.MaxMessageSize() {
-			bundle = append(bundle, &envelope)
+			bundle = append(bundle, rawValue)
 			bundleSize = newSize
 			continue
 		}
@@ -557,7 +559,7 @@ func (s *WMailServer) processRequestInBundles(
 		}
 
 		// Reset the bundle with the current envelope
-		bundle = []*whisper.Envelope{&envelope}
+		bundle = []rlp.RawValue{rawValue}
 		bundleSize = envelopeSize
 
 		// Leave if we reached the limit
@@ -608,16 +610,16 @@ func (s *WMailServer) processRequestInBundles(
 	return nextCursor, lastEnvelopeHash
 }
 
-func (s *WMailServer) sendEnvelopes(peer *whisper.Peer, envelopes []*whisper.Envelope, batch bool) error {
+func (s *WMailServer) sendEnvelopes(peer *whisper.Peer, envelopes []rlp.RawValue, batch bool) error {
 	start := time.Now()
 	defer requestProcessNetTimer.UpdateSince(start)
 
 	if batch {
-		return s.w.SendP2PDirect(peer, envelopes...)
+		return s.w.SendRawP2PDirect(peer, envelopes...)
 	}
 
 	for _, env := range envelopes {
-		if err := s.w.SendP2PDirect(peer, env); err != nil {
+		if err := s.w.SendRawP2PDirect(peer, env); err != nil {
 			return err
 		}
 	}
